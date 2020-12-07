@@ -315,13 +315,13 @@ func (d *Device) handleRow() {
 	//      duration as previously illuminated (binary code modulation)
 	d.oen.High()
 	d.lat.High()
-	d.lat.Low()
 
 	// stop the row select timer, switch rows if we have incremented to a new row,
 	// and then re-enable the row select timer.
 	d.selectRow(d.pos.yUp)
 
 	// close the latch before clocking out the next row of data, and enable output
+	d.lat.Low()
 	d.oen.Low()
 
 	d.hub.ResumeTimer(0, d.pos.bcm)
@@ -334,6 +334,7 @@ func (d *Device) handleRow() {
 		r1, g1, b1 := d.rgbBit(x, d.pos.yUp, d.pos.bit) // get upper row
 		r2, g2, b2 := d.rgbBit(x, d.pos.yLo, d.pos.bit) // get lower row
 
+		// check if we can set both RGB data and CLK at the same time.
 		if d.cfg.clkDataPort {
 			// set/clear all 6 data lines and CLK with a single register write.
 			d.hub.ClkRgb(r1, g1, b1, r2, g2, b2)
