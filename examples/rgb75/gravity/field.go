@@ -112,15 +112,14 @@ func (f *Field) normalAcceleration(x, y, z int) (int, int, int) {
 }
 
 // PixelIndex returns the one-dimensional index [0 .. NumPixels-1] of the given
-// Position coordinates (x, y) from logical space, by first converting them to
-// real Pixel coordinates in physical space.
+// Dimension coordinates (x, y) from physical space.
 //
-// For example, after converting the given (x, y) Position coordinates to
-// physical Pixel coordinates: the top-left Pixel (0, 0) would return index 0;
-// The bottom-right Pixel (Width-1, Height-1) would return NumPixels-1;
-// In general, the Pixel at (x, y) will return index y*Width + x.
-func (f *Field) PixelIndex(x, y Position) int {
-	return int(y.Dimension()*f.width + x.Dimension())
+// For example:
+//  - The top-left Pixel (0, 0) would return index 0;
+//  - The bottom-right Pixel (Width-1, Height-1) would return NumPixels-1;
+//  - In general, the Pixel at (x, y) will return index y*Width + x.
+func (f *Field) PixelIndex(x, y Dimension) int {
+	return int(y*f.width + x)
 }
 
 // Update applies a single iteration of movement to all Particles in the

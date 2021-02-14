@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"tinygo.org/x/drivers/examples/rgb75/gravity/accel"
+	// "tinygo.org/x/drivers/examples/rgb75/gravity/image"
 
 	"tinygo.org/x/drivers/lis3dh"
 	"tinygo.org/x/drivers/rgb75"
@@ -76,20 +77,20 @@ func initField(hub *rgb75.Device) (*Field, error) {
 	config := FieldConfig{
 		Width:        64,
 		Height:       32,
-		NumParticles: 64,
+		NumParticles: 256,
 		AccelScale:   1,
 		Elasticity:   128,
-		HandleMove: func(f *Field, p *Particle, x, y Position) {
+		HandleMove: func(f *Field, p *Particle, x, y Dimension) {
 			// clear previous pixel
 			hub.SetPixel(
-				int16(p.x.Dimension()),
-				int16(p.y.Dimension()),
+				int16(p.ix),
+				int16(p.iy),
 				rgb75.ClearColor,
 			)
 			// set new pixel
 			hub.SetPixel(
-				int16(x.Dimension()),
-				int16(y.Dimension()),
+				int16(x),
+				int16(y),
 				color.RGBA{R: 0x00, G: 0xFF, B: 0x00, A: 0xFF},
 			)
 		},

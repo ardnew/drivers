@@ -1,13 +1,13 @@
 package main
 
 import (
-	"errors"
 	"math"
 	"math/rand"
-	"strconv"
 )
 
 const (
+	dimensionMax = Dimension(32767)
+	dimensionMin = Dimension(0)
 	positionMax  = Position(int32(velocityMax) * int32(dimensionMax))
 	positionMin  = Position(0)
 	velocityMax  = Velocity(256)
@@ -15,31 +15,29 @@ const (
 	velocityMax2 = velocityMax * velocityMax // max²
 )
 
-var (
-	ErrInvalidPosition = errors.New(
-		"invalid position (" +
-			strconv.FormatInt(int64(positionMin), 10) + "-" +
-			strconv.FormatInt(int64(positionMax), 10) + ")",
-	)
-	ErrInvalidVelocity = errors.New(
-		"invalid velocity (" +
-			strconv.FormatInt(int64(velocityMin), 10) + "-" +
-			strconv.FormatInt(int64(velocityMax), 10) + ")",
-	)
-)
+// Dimension represents one component of a discrete pixel's 2D coordinates
+type Dimension uint16 // (physical space)
+
+// Position converts the receiver d in physical space to a component of a
+// Particle coordinate in logical space.
+func (d Dimension) Position() Position {
+	return Position(int(d) * int(velocityMax))
+}
 
 // Position represents one component of a discrete Particle's 2D coordinates
 type Position int32 // (logical space)
 
 // Dimension converts the receiver p in logical space to a component of a real
-// Pixel coordinate in physical space.
+// pixel coordinate in physical space.
 func (p Position) Dimension() Dimension {
 	return Dimension(int(p) / int(velocityMax))
 }
 
-// Move returns the receiver Position p adjusted by given Velocity v.
-func (p Position) Move(v Velocity) Position {
-	return Position(int(p) + int(v))
+// Move returns the receiver Position p, and its equivalent Dimension, adjusted
+// by given Velocity v.
+func (p Position) Move(v Velocity) (Position, Dimension) {
+	pos := Position(int(p) + int(v))
+	return pos, pos.Dimension()
 }
 
 // Velocity represents one component of a discrete Particle's 2D velocity
@@ -63,14 +61,15 @@ func (v Velocity) Abs() Velocity {
 //
 // The space through which a Particle moves is referred to in documentation as
 // "logical space", since that space is much larger than the "physical space"
-// used to describe physical Pixel coordinates; these added logical coordinates
-// exist "in-between" Pixels, and allow for smoother movement in the absence of
+// used to describe physical pixel coordinates; these added logical coordinates
+// exist "in-between" pixels, and allow for smoother movement in the absence of
 // floating-point coordinates.
 //
 // Particles in logical space are always eventually projected onto physical
-// space when displaying them with a Pixel.
+// space when displaying them with a pixel.
 type Particle struct {
-	x, y   Position
+	ix, iy Dimension
+	px, py Position
 	vx, vy Velocity
 }
 
@@ -78,10 +77,10 @@ type Particle struct {
 type Particles []Particle
 
 // ParticleMove defines a callback used to notify callers when a Particle moves.
-type ParticleMove func(f *Field, p *Particle, x, y Position)
+type ParticleMove func(f *Field, p *Particle, x, y Dimension)
 
 // MakeParticles returns a new Particle buffer of given Field f and count n.
-// Each Particle is initially positioned in the first unoccupied Pixel on the
+// Each Particle is initially positioned in the first unoccupied pixel on the
 // Field.
 func MakeParticles(f *Field, n int) Particles {
 	if n >= 0 {
@@ -89,7 +88,7 @@ func MakeParticles(f *Field, n int) Particles {
 		for i := range particle {
 			x := Dimension(i) % f.width
 			y := Dimension(i) / f.width
-			particle[i].SetPosition(f, x.Position(), y.Position())
+			particle[i].SetPosition(f, x, y, x.Position(), y.Position())
 		}
 		return particle
 	}
@@ -113,104 +112,92 @@ func (p *Particle) Accelerate(x, y, z, epsilon int) {
 	}
 }
 
-// SetPosition sets the (x, y) Position coordinates of the receiver Particle p
-// in logical space, and updates the Obstacle coordinates of the given Field f
-// in physical space.
-func (p *Particle) SetPosition(f *Field, x, y Position) {
+// SetPosition sets the coordinates of the receiver Particle p, and updates the
+// Obstacle coordinates of the given Field f.
+func (p *Particle) SetPosition(f *Field, ix, iy Dimension, px, py Position) {
 	if nil != f.handleMove {
-		f.handleMove(f, p, x, y)
+		f.handleMove(f, p, ix, iy)
 	}
-	f.obstacle.Clr(p.x.Dimension(), p.y.Dimension())
-	p.x, p.y = x, y
-	f.obstacle.Set(p.x.Dimension(), p.y.Dimension())
+	f.obstacle.Clr(p.ix, p.iy)
+	p.ix, p.iy = ix, iy
+	p.px, p.py = px, py
+	f.obstacle.Set(p.ix, p.iy)
 }
 
-// BounceX reverses horizontal Velocity of the receiver Particle p, and returns
-// the horizontal component of its Position in logical space.
-func (p *Particle) BounceX(f *Field) Position {
-	// note we have a pointer receiver so that this modifies the caller
-	p.vx = p.vx.Reverse(f.elasticity)
-	return p.x
-}
-
-// BounceY reverses vertical Velocity of the receiver Particle p, and returns
-// the vertical component of its Position in logical space.
-func (p *Particle) BounceY(f *Field) Position {
-	// note we have a pointer receiver so that this modifies the caller
-	p.vy = p.vy.Reverse(f.elasticity)
-	return p.y
-}
-
-// BounceXY reverses horizontal & vertical Velocity of the receiver Particle p,
-// and returns the Position in logical space.
-func (p *Particle) BounceXY(f *Field) (x, y Position) {
-	// note we have a pointer receiver so that this modifies the caller
-	return p.BounceX(f), p.BounceY(f)
-}
-
-// Move attempts to change the logical Position coordinates of the receiver
-// Particle p based on its current velocity, or reverses velocity if the change
-// of Position would collide with an Obstacle.
+// Move attempts to change the coordinates of the receiver Particle p based on
+// its current velocity, or reverses velocity if the change would collide with
+// an Obstacle.
 func (p *Particle) Move(f *Field) {
 
 	// first, compute destination Position based on current Velocity
-	x := p.x.Move(p.vx)
-	y := p.y.Move(p.vy)
+	px, ix := p.px.Move(p.vx)
+	py, iy := p.py.Move(p.vy)
 
 	// next, verify we are moving within Field boundaries
-	if x < 0 {
-		x = 0
+	if px < 0 {
 		p.vx = p.vx.Reverse(f.elasticity)
-	} else if x > f.xMax {
-		x = f.xMax
+		px, ix = 0, 0
+	} else if px > f.xMax {
 		p.vx = p.vx.Reverse(f.elasticity)
+		px, ix = f.xMax, f.width-1
 	}
-	if y < 0 {
-		y = 0
+	if py < 0 {
 		p.vy = p.vy.Reverse(f.elasticity)
-	} else if y > f.yMax {
-		y = f.yMax
+		py, iy = 0, 0
+	} else if py > f.yMax {
 		p.vy = p.vy.Reverse(f.elasticity)
+		py, iy = f.yMax, f.height-1
 	}
 
-	// then, determine if we are moving into a new real Pixel in physical space
-	if dp := f.PixelIndex(p.x, p.y) - f.PixelIndex(x, y); 0 != dp {
-		// check if the destination Pixel contains an Obstacle
-		if f.obstacle.Get(x.Dimension(), y.Dimension()) {
+	// then, determine if we are moving into a new real pixel in physical space
+	if dp := f.PixelIndex(p.ix, p.iy) - f.PixelIndex(ix, iy); 0 != dp {
+		// check if the destination pixel contains an Obstacle
+		if f.obstacle.Get(ix, iy) {
 			if dp < 0 {
 				dp = -dp // absolute value of index difference
 			}
 			// determine which direction the Obstacle exists
 			switch dp {
 			case 1: // obstructed by 1 pixel to the left or right
-				x = p.BounceX(f)
+				p.vx = p.vx.Reverse(f.elasticity)
+				px, ix = p.px, p.ix
 
 			case int(f.width): // obstructed by 1 pixel to the top or bottom
-				y = p.BounceY(f)
+				p.vy = p.vy.Reverse(f.elasticity)
+				py, iy = p.py, p.iy
 
 			default: // obstructed by 1 pixel in a diagonal direction
 				if p.vx.Abs() >= p.vy.Abs() {
-					if !f.obstacle.Get(x.Dimension(), p.y.Dimension()) {
-						y = p.BounceY(f)
-					} else if !f.obstacle.Get(p.x.Dimension(), y.Dimension()) {
-						x = p.BounceX(f)
+					if !f.obstacle.Get(ix, p.iy) {
+						p.vy = p.vy.Reverse(f.elasticity)
+						py, iy = p.py, p.iy
+					} else if !f.obstacle.Get(p.ix, iy) {
+						p.vx = p.vx.Reverse(f.elasticity)
+						px, ix = p.px, p.ix
 					} else {
-						x, y = p.BounceXY(f)
+						p.vx = p.vx.Reverse(f.elasticity)
+						p.vy = p.vy.Reverse(f.elasticity)
+						px, ix = p.px, p.ix
+						py, iy = p.py, p.iy
 					}
 				} else {
-					if !f.obstacle.Get(p.x.Dimension(), y.Dimension()) {
-						x = p.BounceX(f)
-					} else if !f.obstacle.Get(x.Dimension(), p.y.Dimension()) {
-						y = p.BounceY(f)
+					if !f.obstacle.Get(p.ix, iy) {
+						p.vx = p.vx.Reverse(f.elasticity)
+						px, ix = p.px, p.ix
+					} else if !f.obstacle.Get(ix, p.iy) {
+						p.vy = p.vy.Reverse(f.elasticity)
+						py, iy = p.py, p.iy
 					} else {
-						x, y = p.BounceXY(f)
+						p.vx = p.vx.Reverse(f.elasticity)
+						p.vy = p.vy.Reverse(f.elasticity)
+						px, ix = p.px, p.ix
+						py, iy = p.py, p.iy
 					}
 				}
 			}
 		}
 	}
 
-	// update coordinates of both Particle (logical space) and Obstacle (physical
-	// space) using new (x, y) Positions.
-	p.SetPosition(f, x, y)
+	// update coordinates of both Particle and Obstacle.
+	p.SetPosition(f, ix, iy, px, py)
 }
